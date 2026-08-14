@@ -45,6 +45,11 @@ public class BlackHoleController : MonoBehaviour
     [SerializeField] private bool calibrateStartRadius = true;
     [Tooltip("Slack on the calibrated start and end sizes, so a star of exactly that width still fits.")]
     [SerializeField] private float calibrationMargin = 1.05f;
+    [Tooltip("Extra slack on the starting hole only, on top of the margin above. At 1 the hole starts barely wider than the smallest star, which reads as tiny; above 1 it starts with some presence and simply grows in smaller steps to still finish at the largest star.")]
+    [SerializeField] private float startRadiusMargin = 1.6f;
+    [Tooltip("How much of the level may still be uneaten when the hole first becomes wide enough for the largest star. At 0 the biggest star only opens up once every single other star is gone - drive into it before that and nothing happens at all, which reads as broken. At 0.3 it opens up with roughly a third of the stars to spare.")]
+    [Range(0f, 0.9f)]
+    [SerializeField] private float growthReserve = 0.3f;
     [Tooltip("Leave stars wider than the hole alone - no pull, no swallow - until it has grown enough for them.")]
     [SerializeField] private bool onlySwallowSmallerStars = true;
 
@@ -124,6 +129,7 @@ public class BlackHoleController : MonoBehaviour
             CalibrateGrowth();
         }
 
+        EnsureProgressPossible();
         UpdateHoleVisual();
     }
 
@@ -147,8 +153,9 @@ public class BlackHoleController : MonoBehaviour
     }
 
     /// <summary>
-    /// Sizes the hole's progression to the level: it starts just big enough for the smallest star
-    /// and, after eating every star but the biggest, is exactly big enough for that last one.
+    /// Sizes the hole's progression to the level: it starts just big enough for the smallest star,
+    /// and every star - including the biggest - becomes edible with stars still left over, so the
+    /// player is never left shoving at something that refuses to react.
     /// </summary>
     private void CalibrateGrowth()
     {
@@ -158,13 +165,10 @@ public class BlackHoleController : MonoBehaviour
             return;
         }
 
-        float smallest = float.MaxValue;
-        float largest = 0f;
-        foreach (float radius in _starRadii.Values)
-        {
-            smallest = Mathf.Min(smallest, radius);
-            largest = Mathf.Max(largest, radius);
-        }
+        List<float> sorted = new List<float>(_starRadii.Values);
+        sorted.Sort();
+        float smallest = sorted[0];
+        float largest = sorted[sorted.Count - 1];
 
         // Preserve the designed relationship between the gravity well and the hole, so the well
         // scales along with it instead of staying huge around a tiny starting hole.
@@ -172,29 +176,77 @@ public class BlackHoleController : MonoBehaviour
 
         if (calibrateStartRadius)
         {
-            eventHorizonRadius = smallest * calibrationMargin;
+            // The start margin is deliberately generous so the hole doesn't read as a speck, but on
+            // a level where every star is a similar size it could cover everything immediately -
+            // clamp it so there is always something left to grow into.
+            eventHorizonRadius = Mathf.Min(smallest * calibrationMargin * Mathf.Max(1f, startRadiusMargin),
+                                           largest * calibrationMargin);
         }
 
-        // The largest star is necessarily the last one swallowed, so the hole has to reach its
-        // size over the other stars - hence count - 1 growth steps, not count.
-        float targetRadius = largest * calibrationMargin;
-        int growthSteps = Mathf.Max(1, _starRadii.Count - 1);
-        float totalGrowth = Mathf.Max(0f, targetRadius - eventHorizonRadius);
-
-        eventHorizonGrowthPerConsume = totalGrowth / growthSteps;
-        pullRadius = eventHorizonRadius * pullToHoleRatio;
-        pullRadiusGrowthPerConsume = eventHorizonGrowthPerConsume * pullToHoleRatio;
-
-        if (totalGrowth <= 0f)
+        // The i-th smallest star has i smaller stars to feed on before it, so the growth step has
+        // to be at least (what it needs) / (how many meals come first). The reserve shortens that
+        // budget on purpose: the star opens up a few consumes early instead of exactly on the last
+        // one, which is what stops the biggest star from being gated behind hunting every speck.
+        // Whichever star is hungriest sets the step for all of them.
+        float growthPerConsume = 0f;
+        for (int i = 1; i < sorted.Count; i++)
         {
-            Debug.LogWarning($"BlackHoleController: the hole already starts at radius {eventHorizonRadius:0.000}, " +
-                             $"which covers the largest star ({largest:0.000}), so there is nothing to grow into.");
+            float needed = sorted[i] * calibrationMargin - eventHorizonRadius;
+            if (needed <= 0f)
+            {
+                continue;
+            }
+
+            int mealsAvailable = Mathf.Max(1, Mathf.FloorToInt(i * (1f - growthReserve)));
+            growthPerConsume = Mathf.Max(growthPerConsume, needed / mealsAvailable);
         }
+
+        eventHorizonGrowthPerConsume = growthPerConsume;
+        pullRadius = eventHorizonRadius * pullToHoleRatio;
+        pullRadiusGrowthPerConsume = growthPerConsume * pullToHoleRatio;
+
+        int mealsUntilLargest = growthPerConsume > 0f
+            ? Mathf.CeilToInt((largest * calibrationMargin - eventHorizonRadius) / growthPerConsume)
+            : 0;
 
         Debug.Log($"BlackHoleController calibrated for {_starRadii.Count} stars: " +
-                  $"radius {eventHorizonRadius:0.000} -> {targetRadius:0.000} " +
-                  $"(+{eventHorizonGrowthPerConsume:0.000} per star over {growthSteps} steps), " +
-                  $"smallest star {smallest:0.000}, largest {largest:0.000}.");
+                  $"radius {eventHorizonRadius:0.000} (+{growthPerConsume:0.000} per star), " +
+                  $"smallest star {smallest:0.000}, largest {largest:0.000}, " +
+                  $"largest becomes edible after {mealsUntilLargest} of {_starRadii.Count - 1} other stars.");
+    }
+
+    /// <summary>
+    /// Last-resort guard against a stalemate: if every star still standing is too wide for the
+    /// hole, nothing can ever be eaten again and the level is unwinnable. Calibration is supposed
+    /// to make this impossible - this exists so a hand-tuned level can't soft-lock.
+    /// </summary>
+    private void EnsureProgressPossible()
+    {
+        if (!onlySwallowSmallerStars || _starRadii.Count == 0)
+        {
+            return;
+        }
+
+        float smallestRemaining = float.MaxValue;
+        foreach (float radius in _starRadii.Values)
+        {
+            smallestRemaining = Mathf.Min(smallestRemaining, radius);
+        }
+
+        if (smallestRemaining <= eventHorizonRadius)
+        {
+            return;
+        }
+
+        float rescuedRadius = smallestRemaining * calibrationMargin;
+        float pullToHoleRatio = pullRadius / Mathf.Max(eventHorizonRadius, 0.0001f);
+
+        Debug.LogWarning($"BlackHoleController: every remaining star is wider than the hole " +
+                         $"({eventHorizonRadius:0.000}), so nothing could ever be swallowed again. " +
+                         $"Growing to {rescuedRadius:0.000} to fit the smallest one.");
+
+        eventHorizonRadius = rescuedRadius;
+        pullRadius = eventHorizonRadius * pullToHoleRatio;
     }
 
     private void Update()
@@ -213,6 +265,17 @@ public class BlackHoleController : MonoBehaviour
         {
             horizontal = joystickInput.x;
             vertical = joystickInput.y;
+        }
+        else
+        {
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard != null)
+            {
+                if (keyboard.aKey.isPressed || keyboard.leftArrowKey.isPressed) horizontal -= 1f;
+                if (keyboard.dKey.isPressed || keyboard.rightArrowKey.isPressed) horizontal += 1f;
+                if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed) vertical -= 1f;
+                if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed) vertical += 1f;
+            }
         }
 
         Vector3 inputDirection = new Vector3(horizontal, 0f, vertical);
@@ -350,6 +413,12 @@ public class BlackHoleController : MonoBehaviour
 
         float starRadius = planetCollider != null ? StarRadius(planetCollider) : eventHorizonRadius;
 
+        // Off the books before growing, so the stalemate check only weighs stars still in play.
+        if (planetCollider != null)
+        {
+            _starRadii.Remove(planetCollider);
+        }
+
         Grow();
         SpawnConsumeBurst(planet.transform.position);
         StartCoroutine(FallIntoHoleRoutine(planet.transform, starRadius));
@@ -410,6 +479,10 @@ public class BlackHoleController : MonoBehaviour
         burstGO.transform.position = position;
 
         ParticleSystem ps = burstGO.AddComponent<ParticleSystem>();
+
+        // A fresh system plays on awake, and Unity refuses to retune duration mid-playback.
+        ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
         ParticleSystem.MainModule main = ps.main;
         main.duration = 0.3f;
         main.loop = false;
@@ -439,6 +512,7 @@ public class BlackHoleController : MonoBehaviour
     {
         eventHorizonRadius += eventHorizonGrowthPerConsume;
         pullRadius += pullRadiusGrowthPerConsume;
+        EnsureProgressPossible();
         UpdateHoleVisual();
     }
 
@@ -468,27 +542,7 @@ public class BlackHoleController : MonoBehaviour
     {
         Vector3 center = transform.position;
         Shader.SetGlobalVector(HoleCenterId, new Vector4(center.x, center.y, center.z, 0f));
-
-        // The floor only needs to stay open as wide as the gameplay radius, except while a star
-        // is actively falling near the rim: then the cut has to reach past that star's far edge,
-        // or the still-solid floor clips straight through it as it drops.
-        float cutoutRadius = eventHorizonRadius;
-        for (int i = 0; i < _fallingStars.Count; i++)
-        {
-            Transform star = _fallingStars[i].Star;
-            if (star == null)
-            {
-                continue;
-            }
-
-            float planarDistance = Vector2.Distance(
-                new Vector2(star.position.x, star.position.z),
-                new Vector2(center.x, center.z));
-
-            cutoutRadius = Mathf.Max(cutoutRadius, planarDistance + _fallingStars[i].Radius);
-        }
-
-        Shader.SetGlobalFloat(HoleRadiusId, cutoutRadius);
+        Shader.SetGlobalFloat(HoleRadiusId, eventHorizonRadius);
     }
 
 #if UNITY_EDITOR

@@ -24,6 +24,7 @@ public class UIManager : MonoBehaviour
             GameManager.Instance.OnTimeChanged += UpdateTimerDisplay;
             GameManager.Instance.OnGameWon += ShowWinScreen;
             GameManager.Instance.OnGameOver += ShowGameOverScreen;
+            GameManager.Instance.OnStarsProgressChanged += UpdateStarsProgressDisplay;
         }
     }
 
@@ -34,6 +35,7 @@ public class UIManager : MonoBehaviour
             GameManager.Instance.OnTimeChanged -= UpdateTimerDisplay;
             GameManager.Instance.OnGameWon -= ShowWinScreen;
             GameManager.Instance.OnGameOver -= ShowGameOverScreen;
+            GameManager.Instance.OnStarsProgressChanged -= UpdateStarsProgressDisplay;
         }
     }
 
@@ -43,6 +45,18 @@ public class UIManager : MonoBehaviour
         {
             int seconds = Mathf.CeilToInt(timeRemaining);
             timerText.text = seconds.ToString();
+        }
+    }
+
+    private void UpdateStarsProgressDisplay(int remaining, int eaten)
+    {
+        if (starsLeftText != null)
+        {
+            starsLeftText.text = remaining.ToString();
+        }
+        if (candiesEatenText != null)
+        {
+            candiesEatenText.text = eaten.ToString();
         }
     }
 
