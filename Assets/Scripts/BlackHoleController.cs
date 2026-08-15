@@ -462,7 +462,10 @@ public class BlackHoleController : MonoBehaviour
 
         if (GameManager.Instance != null)
         {
-            GameManager.Instance.RegisterStarConsumed();
+            // Chat-spawned stars carry their AI-assigned point value; level-authored ones don't
+            // have the component at all and score zero, same as before this existed.
+            SpawnedStarInfo info = star.GetComponent<SpawnedStarInfo>();
+            GameManager.Instance.RegisterStarConsumed(info != null ? info.PointValue : 0);
         }
 
         if (SoundEffectPlayer.Instance != null)

@@ -27,7 +27,7 @@ Material:
     m_Floats:
     - _RimWidth: 0.35
     m_Colors:
-    - _BaseColor: {r: 0.6415094, g: 0.569743, b: 0.32378072, a: 1}
+    - _BaseColor: {r: 0.3254902, g: 0.45177776, b: 0.6431373, a: 1}
     - _RimColor: {r: 1, g: 0.4, b: 0.12, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

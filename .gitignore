@@ -49,6 +49,9 @@ sysinfo.txt
 crashlytics-build.properties
 *.stackdump
 
+# Local secrets - never commit API keys (see ChatManager.cs)
+/secrets/
+
 # Builds & packages
 *.apk
 *.aab
